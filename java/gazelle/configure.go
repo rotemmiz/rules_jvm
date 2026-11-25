@@ -12,6 +12,7 @@ import (
 	"github.com/bazel-contrib/rules_jvm/java/gazelle/private/types"
 	"github.com/bazelbuild/bazel-gazelle/config"
 	"github.com/bazelbuild/bazel-gazelle/rule"
+	"github.com/bazelbuild/bazel-gazelle/walk"
 	bzl "github.com/bazelbuild/buildtools/build"
 )
 
@@ -327,6 +328,42 @@ func (jc *Configurer) Configure(c *config.Config, rel string, f *rule.File) {
 		}
 		jc.lang.mavenResolver = resolver
 	}
+
+	if cfg.ExtensionEnabled() {
+		jc.prefetchParses(rel, cfg.KotlinEnabled())
+	}
+}
+
+// prefetchParses starts parsing the sources of rel and of its direct subdirectories in the
+// background. Gazelle configures a directory before it walks its subdirectories and generates
+// rules for it after them, so these parses run while Gazelle walks the tree, and GenerateRules
+// usually finds them done. A prefetch is only used if GenerateRules asks to parse exactly the
+// same files; a subdirectory that turns off the extension or Kotlin just wastes its prefetch.
+func (jc *Configurer) prefetchParses(rel string, kotlinEnabled bool) {
+	info, ok := walkDirInfo(rel)
+	if !ok {
+		return
+	}
+	jc.lang.parser.Prefetch(rel, sourceFilesToParse(info.RegularFiles, kotlinEnabled))
+	for _, subdir := range info.Subdirs {
+		subRel := path.Join(rel, subdir)
+		if subInfo, ok := walkDirInfo(subRel); ok {
+			jc.lang.parser.Prefetch(subRel, sourceFilesToParse(subInfo.RegularFiles, kotlinEnabled))
+		}
+	}
+}
+
+// walkDirInfo returns the files and subdirectories Gazelle's walk sees in rel, honoring
+// exclusions. walk.GetDirInfo panics outside of a walk, for instance when a test calls
+// Configure directly; there is nothing to prefetch then.
+func walkDirInfo(rel string) (info walk.DirInfo, ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	info, err := walk.GetDirInfo(rel)
+	return info, err == nil
 }
 
 func (jc *Configurer) parseTwoClassNamesDirective(

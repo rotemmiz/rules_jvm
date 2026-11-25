@@ -19,6 +19,7 @@ type Runner struct {
 	logger        zerolog.Logger
 	rpc           pb.JavaParserClient
 	serverManager *servermanager.ServerManager
+	prefetch      *prefetcher
 }
 
 func NewRunner(logger zerolog.Logger, repoRoot string, javaLogLevel string) (*Runner, error) {
@@ -32,11 +33,26 @@ func NewRunner(logger zerolog.Logger, repoRoot string, javaLogLevel string) (*Ru
 		return nil, fmt.Errorf("failed to start / connect to javaparser server: %w", err)
 	}
 
+	rpc := pb.NewJavaParserClient(conn)
 	return &Runner{
 		logger:        logger.With().Str("_c", "javaparser").Logger(),
-		rpc:           pb.NewJavaParserClient(conn),
+		rpc:           rpc,
 		serverManager: serverManager,
+		prefetch:      newPrefetcher(rpc, 0),
 	}, nil
+}
+
+// Prefetch starts parsing files in the package rel in the background, so that a later
+// ParsePackage call with the same Rel and Files doesn't have to wait for the whole parse.
+// At most GOMAXPROCS prefetches run at a time.
+func (r *Runner) Prefetch(rel string, files []string) {
+	r.prefetch.schedule(rel, files)
+}
+
+// StopPrefetching cancels the prefetches that haven't finished, and waits for them to exit.
+// It must be called before the server is shut down.
+func (r *Runner) StopPrefetching() {
+	r.prefetch.stop()
 }
 
 func (r *Runner) ServerManager() *servermanager.ServerManager {
@@ -56,7 +72,7 @@ func (r Runner) ParsePackage(ctx context.Context, in *ParsePackageRequest) (*jav
 			Msg("parse package done")
 	}(time.Now())
 
-	resp, err := r.rpc.ParsePackage(ctx, &pb.ParsePackageRequest{Rel: in.Rel, Files: in.Files})
+	resp, err := r.prefetch.parse(ctx, in)
 	if err != nil {
 		if grpcErr, ok := status.FromError(err); ok {
 			// gRPC is an implementation detail of the javaparser layer, and shouldn't be relied on by higher layers.
