@@ -64,6 +64,10 @@ type Resolver struct {
 	// configs provides a map from pkg to config. This allows us to use the config in
 	// Embeds.
 	configs map[string]*config.Config
+	// declaredClasses memoizes, per rule label, the (package, outer class) pairs the rule
+	// declares, so ruleDeclaresClass is a map lookup rather than a scan of every class a
+	// (possibly module-granularity) rule exports.
+	declaredClasses map[label.Label]map[declaredClassKey]struct{}
 }
 
 // packageClassIndex maps class names to their providing labels for a single package.
@@ -82,10 +86,11 @@ func NewResolver(lang *javaLang) *Resolver {
 	}
 
 	return &Resolver{
-		lang:          lang,
-		internalCache: internalCache,
-		classIndex:    make(map[types.PackageName]*packageClassIndex),
-		configs:       make(map[string]*config.Config),
+		lang:            lang,
+		internalCache:   internalCache,
+		classIndex:      make(map[types.PackageName]*packageClassIndex),
+		configs:         make(map[string]*config.Config),
+		declaredClasses: make(map[label.Label]map[declaredClassKey]struct{}),
 	}
 }
 
@@ -259,6 +264,16 @@ func ruleIsTestOnly(r *rule.Rule) bool {
 
 func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rule.Rule, attrName string, requiredPackageNames *sorted_set.SortedSet[types.PackageName], importedClasses *sorted_set.SortedSet[types.ClassName], ix *resolve.RuleIndex, isTestRule bool, from label.Label, ownPackageNames *sorted_set.SortedSet[types.PackageName]) {
 	labels := sorted_set.NewSortedSetFn[label.Label]([]label.Label{}, sorted_set.LabelLess)
+	// Many imports of a rule resolve to the same label, and every SortedSet insert compares
+	// labels through Label.String(), which allocates. Skip the insert for a label already added.
+	added := make(map[label.Label]struct{})
+	addLabel := func(l label.Label) {
+		if _, ok := added[l]; ok {
+			return
+		}
+		added[l] = struct{}{}
+		labels.Add(l)
+	}
 
 	// Build a map of package -> classes for efficient lookup during class-level resolution
 	classesByPackage := make(map[types.PackageName][]types.ClassName)
@@ -309,7 +324,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 				// Check for explicit resolve directive for this specific class first
 				classImportSpec := resolve.ImportSpec{Lang: languageName, Imp: className.FullyQualifiedClassName()}
 				if ol, found := resolve.FindRuleWithOverride(c, classImportSpec, languageName); found {
-					labels.Add(simplifyLabel(c.RepoName, ol, from))
+					addLabel(simplifyLabel(c.RepoName, ol, from))
 					continue
 				}
 
@@ -322,7 +337,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 					l = jr.resolveSingleClass(c, pc, className, ix, from, isTestRule)
 				}
 				if l != label.NoLabel {
-					labels.Add(simplifyLabel(c.RepoName, l, from))
+					addLabel(simplifyLabel(c.RepoName, l, from))
 				}
 			}
 			continue
@@ -331,7 +346,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 		// Try package-level resolution first (fast path)
 		dep, ambiguous := jr.resolveSinglePackageWithAmbiguity(c, pc, imp, ix, from, isTestRule, ownPackageNames, pkgClasses)
 		if dep != label.NoLabel {
-			labels.Add(simplifyLabel(c.RepoName, dep, from))
+			addLabel(simplifyLabel(c.RepoName, dep, from))
 
 			// The package resolved unambiguously to a single target, but an external
 			// gazelle plugin (e.g. a proto/wire generator) may own some classes of the same
@@ -344,7 +359,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 					continue
 				}
 				if l := jr.resolveClassFromCrossResolver(c, pc, className, ix, from); l != label.NoLabel {
-					labels.Add(l)
+					addLabel(l)
 					continue
 				}
 				if isTestRule {
@@ -352,7 +367,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 					// set) whose package the resolved production target also owns; the in-repo class
 					// index includes testonly providers for test rules.
 					if l := jr.resolveSingleClass(c, pc, className, ix, from, true); l != label.NoLabel {
-						labels.Add(l)
+						addLabel(l)
 						continue
 					}
 					// Or the class may be a helper in another package's java_test_suite (its
@@ -360,7 +375,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 					// declares the class -- a class the production provider doesn't declare may be a
 					// main top-level function, not a test helper, which must not pull the lib in.
 					if l := jr.resolveTestSuiteHelperClass(c, imp, className, ix, from); l != label.NoLabel {
-						labels.Add(l)
+						addLabel(l)
 						continue
 					}
 				}
@@ -381,7 +396,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 				// Check for explicit resolve directive for this specific class first
 				classImportSpec := resolve.ImportSpec{Lang: languageName, Imp: className.FullyQualifiedClassName()}
 				if ol, found := resolve.FindRuleWithOverride(c, classImportSpec, languageName); found {
-					labels.Add(simplifyLabel(c.RepoName, ol, from))
+					addLabel(simplifyLabel(c.RepoName, ol, from))
 					resolvedAny = true
 					continue
 				}
@@ -398,7 +413,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 					l = jr.resolveTestSuiteHelperClass(c, imp, className, ix, from)
 				}
 				if l != label.NoLabel {
-					labels.Add(simplifyLabel(c.RepoName, l, from))
+					addLabel(simplifyLabel(c.RepoName, l, from))
 					resolvedAny = true
 				}
 			}
@@ -428,7 +443,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 				continue
 			}
 			if l := jr.resolveSingleClass(c, pc, className, ix, from, isTestRule); l != label.NoLabel {
-				labels.Add(l)
+				addLabel(l)
 			}
 		}
 	}
@@ -757,17 +772,26 @@ func (jr *Resolver) resolveSingleClass(c *config.Config, pc *javaconfig.Config, 
 // cache) to provide the outer class of className. It lets the fast path skip
 // cross-resolver probes for classes the resolved in-repo target already owns.
 func (jr *Resolver) ruleDeclaresClass(lbl label.Label, className types.ClassName) bool {
-	cacheLabel := label.New("", lbl.Pkg, lbl.Name)
-	info, ok := jr.lang.classExportCache[cacheLabel.String()]
+	cacheKey := label.New("", lbl.Pkg, lbl.Name)
+	declared, ok := jr.declaredClasses[cacheKey]
 	if !ok {
-		return false
-	}
-	for _, cls := range info.classes {
-		if cls.PackageName() == className.PackageName() && cls.BareOuterClassName() == className.BareOuterClassName() {
-			return true
+		info, found := jr.lang.classExportCache[cacheKey.String()]
+		if !found {
+			return false
 		}
+		declared = make(map[declaredClassKey]struct{}, len(info.classes))
+		for _, cls := range info.classes {
+			declared[declaredClassKey{cls.PackageName().Name, cls.BareOuterClassName()}] = struct{}{}
+		}
+		jr.declaredClasses[cacheKey] = declared
 	}
-	return false
+	_, ok = declared[declaredClassKey{className.PackageName().Name, className.BareOuterClassName()}]
+	return ok
+}
+
+type declaredClassKey struct {
+	pkg   string
+	outer string
 }
 
 // resolveTestSuiteHelperClass returns the "<suite>-test-lib" helper library of the lone

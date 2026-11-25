@@ -12,7 +12,10 @@ go_library(
 
 go_test(
     name = "types_test",
-    srcs = ["types_test.go"],
+    srcs = [
+        "names_test.go",
+        "types_test.go",
+    ],
     embed = [
         ":types",
     ],

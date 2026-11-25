@@ -23,7 +23,8 @@ func PackageNameLess(l, r PackageName) bool {
 }
 
 func PackageNamesHasPrefix(whole, prefix PackageName) bool {
-	return whole.Name == prefix.Name || strings.HasPrefix(whole.Name, prefix.Name+".")
+	w, p := whole.Name, prefix.Name
+	return w == p || (len(w) > len(p) && w[len(p)] == '.' && strings.HasPrefix(w, p))
 }
 
 type ClassName struct {
@@ -44,22 +45,32 @@ func (c *ClassName) BareOuterClassName() string {
 }
 
 func (c *ClassName) FullyQualifiedOuterClassName() string {
-	var parts []string
-	if c.packageName.Name != "" {
-		parts = append(parts, strings.Split(c.packageName.Name, ".")...)
+	if c.packageName.Name == "" {
+		return c.bareOuterClassName
 	}
-	parts = append(parts, c.bareOuterClassName)
-	return strings.Join(parts, ".")
+	return c.packageName.Name + "." + c.bareOuterClassName
 }
 
 func (c *ClassName) FullyQualifiedClassName() string {
-	var parts []string
-	if c.packageName.Name != "" {
-		parts = append(parts, strings.Split(c.packageName.Name, ".")...)
+	if len(c.innerClassNames) == 0 {
+		return c.FullyQualifiedOuterClassName()
 	}
-	parts = append(parts, c.bareOuterClassName)
-	parts = append(parts, c.innerClassNames...)
-	return strings.Join(parts, ".")
+	n := len(c.packageName.Name) + 1 + len(c.bareOuterClassName)
+	for _, inner := range c.innerClassNames {
+		n += 1 + len(inner)
+	}
+	var b strings.Builder
+	b.Grow(n)
+	if c.packageName.Name != "" {
+		b.WriteString(c.packageName.Name)
+		b.WriteByte('.')
+	}
+	b.WriteString(c.bareOuterClassName)
+	for _, inner := range c.innerClassNames {
+		b.WriteByte('.')
+		b.WriteString(inner)
+	}
+	return b.String()
 }
 
 func NewClassName(packageName PackageName, bareOuterClassName string) ClassName {
@@ -103,8 +114,80 @@ func ParseClassName(fullyQualified string) (*ClassName, error) {
 	}, nil
 }
 
+// ClassNameLess orders class names by their FullyQualifiedClassName, without building it.
+// It is the comparator of every SortedSet[ClassName], so it runs very often.
 func ClassNameLess(l, r ClassName) bool {
-	return l.FullyQualifiedClassName() < r.FullyQualifiedClassName()
+	return compareFullyQualifiedClassNames(&l, &r) < 0
+}
+
+// fqcnCursor walks the bytes of a ClassName's FullyQualifiedClassName without building it.
+type fqcnCursor struct {
+	c     *ClassName
+	part  int // -1: package, 0: outer class, i>0: innerClassNames[i-1]
+	off   int
+	inSep bool
+}
+
+func newFqcnCursor(c *ClassName) fqcnCursor {
+	if c.packageName.Name == "" {
+		return fqcnCursor{c: c, part: 0}
+	}
+	return fqcnCursor{c: c, part: -1}
+}
+
+func (f *fqcnCursor) partString() string {
+	switch {
+	case f.part < 0:
+		return f.c.packageName.Name
+	case f.part == 0:
+		return f.c.bareOuterClassName
+	default:
+		return f.c.innerClassNames[f.part-1]
+	}
+}
+
+// next returns the next byte, or false at the end of the name.
+func (f *fqcnCursor) next() (byte, bool) {
+	for {
+		if f.inSep {
+			f.inSep = false
+			return '.', true
+		}
+		s := f.partString()
+		if f.off < len(s) {
+			b := s[f.off]
+			f.off++
+			return b, true
+		}
+		if f.part >= len(f.c.innerClassNames) {
+			return 0, false
+		}
+		f.part++
+		f.off = 0
+		f.inSep = true
+	}
+}
+
+// compareFullyQualifiedClassNames orders like strings.Compare on FullyQualifiedClassName.
+func compareFullyQualifiedClassNames(l, r *ClassName) int {
+	lc, rc := newFqcnCursor(l), newFqcnCursor(r)
+	for {
+		lb, lok := lc.next()
+		rb, rok := rc.next()
+		switch {
+		case !lok && !rok:
+			return 0
+		case !lok:
+			return -1
+		case !rok:
+			return 1
+		case lb != rb:
+			if lb < rb {
+				return -1
+			}
+			return 1
+		}
+	}
 }
 
 type ResolveInput struct {
