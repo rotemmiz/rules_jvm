@@ -24,7 +24,7 @@ type Runner struct {
 }
 
 // NewRunner starts or connects to the javaparser server. At most prefetchConcurrency prefetches
-// run at once; 0 turns prefetching off, and a negative value uses GOMAXPROCS.
+// run at once; 0 turns prefetching off, and a negative value uses min(GOMAXPROCS, 4).
 func NewRunner(logger zerolog.Logger, repoRoot string, javaLogLevel string, prefetchConcurrency int) (*Runner, error) {
 	serverManager, err := servermanager.New(repoRoot, javaLogLevel)
 	if err != nil {
@@ -42,7 +42,7 @@ func NewRunner(logger zerolog.Logger, repoRoot string, javaLogLevel string, pref
 		serverManager: serverManager,
 	}
 	if prefetchConcurrency < 0 {
-		prefetchConcurrency = runtime.GOMAXPROCS(0)
+		prefetchConcurrency = min(runtime.GOMAXPROCS(0), 4)
 	}
 	if prefetchConcurrency > 0 {
 		r.prefetch = newPrefetcher(r.rpc, prefetchConcurrency)
