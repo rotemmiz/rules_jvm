@@ -42,7 +42,7 @@ func (jc *Configurer) RegisterFlags(fs *flag.FlagSet, cmd string, c *config.Conf
 	fs.Var(&jc.annotationToWrapper, "java-annotation-to-wrapper", "Mapping of annotations (on test classes) to wrapper rules which should be used around the test rule. Example: com.example.annotations.RequiresNetwork=@some//wrapper:file.bzl=requires_network")
 	fs.StringVar(&jc.mavenInstallFile, "java-maven-install-file", "", "Path of the maven_install.json file. Defaults to \"maven_install.json\".")
 	fs.StringVar(&jc.mavenIndexFile, "maven-index-file", "", "Path of the maven_index.json file. Defaults to \"maven_index.json\".")
-	fs.IntVar(&jc.prefetchConcurrency, "java-parser-prefetch-concurrency", -1, "Maximum number of packages to parse in the background ahead of rule generation. 0 turns prefetching off; a negative value uses GOMAXPROCS.")
+	fs.IntVar(&jc.prefetchConcurrency, "java-parser-prefetch-concurrency", -1, "Maximum number of packages to parse in the background ahead of rule generation. 0 turns prefetching off; a negative value uses min(GOMAXPROCS, 4).")
 }
 
 func (jc *Configurer) CheckFlags(fs *flag.FlagSet, c *config.Config) error {
