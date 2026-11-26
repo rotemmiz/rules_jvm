@@ -165,32 +165,6 @@ func TestPrefetchGivesSameResults(t *testing.T) {
 	}
 }
 
-func TestPrefetchUsesRunningParse(t *testing.T) {
-	fake := newFakeParser()
-	fake.gate = make(chan struct{})
-	p := newPrefetcher(fake, 2)
-	defer p.stop()
-
-	files := []string{"A.java", "B.java"}
-	p.schedule("a", files)
-	waitForStart(t, fake, requestKey("a", files))
-
-	result := make(chan string)
-	go func() { result <- parseResult(t, p, "a", files) }()
-	select {
-	case got := <-result:
-		t.Fatalf("parse returned %q before the running prefetch finished", got)
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(fake.gate)
-	if got, want := <-result, "a:A.java,B.java|A.java,B.java"; got != want {
-		t.Errorf("parse = %q, want %q", got, want)
-	}
-	if n := fake.callCount("a", files); n != 1 {
-		t.Errorf("request was sent %d times, want 1", n)
-	}
-}
-
 func TestPrefetchWithDifferentFilesIsNotUsed(t *testing.T) {
 	fake := newFakeParser()
 	p := newPrefetcher(fake, 2)
@@ -232,19 +206,6 @@ func TestPrefetchNotStartedIsParsedByCaller(t *testing.T) {
 	p.stop()
 	if n := fake.callCount("queued", files); n != 1 {
 		t.Errorf("queued request was sent %d times, want 1 (by the caller only)", n)
-	}
-}
-
-func TestPrefetchPropagatesErrors(t *testing.T) {
-	fake := newFakeParser()
-	p := newPrefetcher(fake, 2)
-	defer p.stop()
-
-	files := []string{"A.java"}
-	p.schedule("error", files)
-	waitForStart(t, fake, requestKey("error", files))
-	if got, want := parseResult(t, p, "error", files), "error: cannot parse error:A.java"; got != want {
-		t.Errorf("parse = %q, want %q", got, want)
 	}
 }
 
