@@ -82,7 +82,8 @@ func (p *prefetcher) run(rel string, e *prefetchedParse) {
 	e.started = true
 	p.mu.Unlock()
 
-	e.resp, e.err = p.rpc.ParsePackage(p.ctx, &pb.ParsePackageRequest{Rel: rel, Files: e.files})
+	// Not cancelled by stop: the javaparser server logs a stack trace for each cancelled call.
+	e.resp, e.err = p.rpc.ParsePackage(context.Background(), &pb.ParsePackageRequest{Rel: rel, Files: e.files})
 	close(e.done)
 }
 
@@ -109,8 +110,8 @@ func (p *prefetcher) parse(ctx context.Context, in *ParsePackageRequest) (*pb.Pa
 	}
 }
 
-// stop cancels the prefetches that are still queued or running, and waits for their
-// goroutines to exit. Prefetch requests made after stop are ignored.
+// stop cancels the prefetches that haven't started, and waits for the running ones to finish.
+// Prefetch requests made after stop are ignored.
 func (p *prefetcher) stop() {
 	p.mu.Lock()
 	p.stopped = true

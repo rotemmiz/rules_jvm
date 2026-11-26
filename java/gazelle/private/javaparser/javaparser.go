@@ -58,7 +58,7 @@ func (r *Runner) Prefetch(rel string, files []string) {
 	}
 }
 
-// StopPrefetching cancels the prefetches that haven't finished and waits for them to exit.
+// StopPrefetching drops the prefetches that haven't started and waits for the running ones.
 func (r *Runner) StopPrefetching() {
 	if r.prefetch != nil {
 		r.prefetch.stop()
