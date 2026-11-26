@@ -251,9 +251,9 @@ func TestPrefetchPropagatesErrors(t *testing.T) {
 func TestParseWaitingForPrefetchHonorsContext(t *testing.T) {
 	fake := newFakeParser()
 	fake.gate = make(chan struct{})
-	defer close(fake.gate)
 	p := newPrefetcher(fake, 1)
 	defer p.stop()
+	defer close(fake.gate)
 
 	files := []string{"A.java"}
 	p.schedule("a", files)
@@ -266,11 +266,11 @@ func TestParseWaitingForPrefetchHonorsContext(t *testing.T) {
 	}
 }
 
-// TestStopLeavesNothingRunning checks that stop cancels queued and running prefetches, that
-// their goroutines exit, and that nothing is sent after it returns.
+// TestStopLeavesNothingRunning checks that stop drops queued prefetches, waits for the running
+// ones to finish without cancelling them, and that nothing is sent after it returns.
 func TestStopLeavesNothingRunning(t *testing.T) {
 	fake := newFakeParser()
-	fake.gate = make(chan struct{}) // Never opened: running prefetches only end when cancelled.
+	fake.gate = make(chan struct{})
 	p := newPrefetcher(fake, 4)
 	for i := 0; i < 100; i++ {
 		p.schedule(fmt.Sprintf("pkg%d", i), []string{"A.java"})
@@ -281,7 +281,18 @@ func TestStopLeavesNothingRunning(t *testing.T) {
 		t.Fatal("no prefetch was sent")
 	}
 
-	p.stop()
+	stopped := make(chan struct{})
+	go func() {
+		p.stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("stop returned while a prefetch was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(fake.gate)
+	<-stopped
 	if n := fake.currentInFlight(); n != 0 {
 		t.Errorf("%d requests still in flight after stop", n)
 	}
