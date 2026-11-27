@@ -64,7 +64,7 @@ def run_one(args, config, pristine, work, tmp):
     start = time.perf_counter()
     log = os.path.join(tmp, "gazelle.log")
     with open(log, "w") as out:
-        rc = subprocess.run(cmd, env=env, stdout=out, stderr=out).returncode
+        rc = subprocess.run(cmd, env=env, stdout=out, stderr=out, cwd=work).returncode
     wall = time.perf_counter() - start
     deadline = time.time() + 60
     while time.time() < deadline and not (os.path.exists(jvm_time) and os.path.getsize(jvm_time) > 0):
