@@ -64,10 +64,6 @@ type Resolver struct {
 	// configs provides a map from pkg to config. This allows us to use the config in
 	// Embeds.
 	configs map[string]*config.Config
-	// declaredClasses memoizes, per rule label, the (package, outer class) pairs the rule
-	// declares, so ruleDeclaresClass is a map lookup rather than a scan of every class a
-	// (possibly module-granularity) rule exports.
-	declaredClasses map[label.Label]map[declaredClassKey]struct{}
 }
 
 // packageClassIndex maps class names to their providing labels for a single package.
@@ -86,11 +82,10 @@ func NewResolver(lang *javaLang) *Resolver {
 	}
 
 	return &Resolver{
-		lang:            lang,
-		internalCache:   internalCache,
-		classIndex:      make(map[types.PackageName]*packageClassIndex),
-		configs:         make(map[string]*config.Config),
-		declaredClasses: make(map[label.Label]map[declaredClassKey]struct{}),
+		lang:          lang,
+		internalCache: internalCache,
+		classIndex:    make(map[types.PackageName]*packageClassIndex),
+		configs:       make(map[string]*config.Config),
 	}
 }
 
@@ -773,23 +768,16 @@ func (jr *Resolver) resolveSingleClass(c *config.Config, pc *javaconfig.Config, 
 // cross-resolver probes for classes the resolved in-repo target already owns.
 func (jr *Resolver) ruleDeclaresClass(lbl label.Label, className types.ClassName) bool {
 	cacheLabel := label.New("", lbl.Pkg, lbl.Name)
-	declared, ok := jr.declaredClasses[cacheLabel]
+	info, ok := jr.lang.classExportCache[cacheLabel.String()]
 	if !ok {
-		if info, found := jr.lang.classExportCache[cacheLabel.String()]; found {
-			declared = make(map[declaredClassKey]struct{}, len(info.classes))
-			for _, cls := range info.classes {
-				declared[declaredClassKey{cls.PackageName().Name, cls.BareOuterClassName()}] = struct{}{}
-			}
-		}
-		jr.declaredClasses[cacheLabel] = declared
+		return false
 	}
-	_, ok = declared[declaredClassKey{className.PackageName().Name, className.BareOuterClassName()}]
-	return ok
-}
-
-type declaredClassKey struct {
-	pkg   string
-	outer string
+	for _, cls := range info.classes {
+		if cls.PackageName() == className.PackageName() && cls.BareOuterClassName() == className.BareOuterClassName() {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveTestSuiteHelperClass returns the "<suite>-test-lib" helper library of the lone
