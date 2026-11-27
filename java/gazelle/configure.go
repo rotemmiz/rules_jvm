@@ -332,19 +332,18 @@ func (jc *Configurer) Configure(c *config.Config, rel string, f *rule.File) {
 	}
 
 	if cfg.ExtensionEnabled() && jc.prefetchConcurrency != 0 {
-		jc.prefetchParses(rel, cfg.KotlinEnabled())
+		jc.prefetchSubdirParses(rel, cfg.KotlinEnabled())
 	}
 }
 
-// prefetchParses starts parsing rel and its direct subdirectories in the background. Gazelle
-// configures a directory before walking its subdirectories and generates its rules after them,
-// so GenerateRules usually finds the parse done.
-func (jc *Configurer) prefetchParses(rel string, kotlinEnabled bool) {
+// prefetchSubdirParses starts parsing the direct subdirectories of rel in the background.
+// Gazelle configures a directory before walking its subdirectories and generates its rules
+// after them, so GenerateRules usually finds the parse done.
+func (jc *Configurer) prefetchSubdirParses(rel string, kotlinEnabled bool) {
 	info, err := walk.GetDirInfo(rel)
 	if err != nil {
 		return
 	}
-	jc.lang.parser.Prefetch(rel, sourceFilesToParse(info.RegularFiles, kotlinEnabled))
 	for _, subdir := range info.Subdirs {
 		subRel := path.Join(rel, subdir)
 		if subInfo, err := walk.GetDirInfo(subRel); err == nil {

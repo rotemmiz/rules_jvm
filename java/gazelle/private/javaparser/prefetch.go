@@ -49,14 +49,14 @@ func newPrefetcher(rpc pb.JavaParserClient, concurrency int) *prefetcher {
 	}
 }
 
-// schedule starts parsing files in rel in the background, unless rel is already pending.
+// schedule starts parsing files in rel in the background.
 func (p *prefetcher) schedule(rel string, files []string) {
 	if len(files) == 0 {
 		return
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if _, ok := p.pending[rel]; ok || p.stopped {
+	if p.stopped {
 		return
 	}
 	e := &prefetchedParse{files: files, done: make(chan struct{})}
