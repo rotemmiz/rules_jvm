@@ -259,16 +259,6 @@ func ruleIsTestOnly(r *rule.Rule) bool {
 
 func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rule.Rule, attrName string, requiredPackageNames *sorted_set.SortedSet[types.PackageName], importedClasses *sorted_set.SortedSet[types.ClassName], ix *resolve.RuleIndex, isTestRule bool, from label.Label, ownPackageNames *sorted_set.SortedSet[types.PackageName]) {
 	labels := sorted_set.NewSortedSetFn[label.Label]([]label.Label{}, sorted_set.LabelLess)
-	// Many imports of a rule resolve to the same label, and every SortedSet insert compares
-	// labels through Label.String(), which allocates. Skip the insert for a label already added.
-	added := make(map[label.Label]struct{})
-	addLabel := func(l label.Label) {
-		if _, ok := added[l]; ok {
-			return
-		}
-		added[l] = struct{}{}
-		labels.Add(l)
-	}
 
 	// Build a map of package -> classes for efficient lookup during class-level resolution
 	classesByPackage := make(map[types.PackageName][]types.ClassName)
@@ -319,7 +309,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 				// Check for explicit resolve directive for this specific class first
 				classImportSpec := resolve.ImportSpec{Lang: languageName, Imp: className.FullyQualifiedClassName()}
 				if ol, found := resolve.FindRuleWithOverride(c, classImportSpec, languageName); found {
-					addLabel(simplifyLabel(c.RepoName, ol, from))
+					labels.Add(simplifyLabel(c.RepoName, ol, from))
 					continue
 				}
 
@@ -332,7 +322,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 					l = jr.resolveSingleClass(c, pc, className, ix, from, isTestRule)
 				}
 				if l != label.NoLabel {
-					addLabel(simplifyLabel(c.RepoName, l, from))
+					labels.Add(simplifyLabel(c.RepoName, l, from))
 				}
 			}
 			continue
@@ -341,7 +331,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 		// Try package-level resolution first (fast path)
 		dep, ambiguous := jr.resolveSinglePackageWithAmbiguity(c, pc, imp, ix, from, isTestRule, ownPackageNames, pkgClasses)
 		if dep != label.NoLabel {
-			addLabel(simplifyLabel(c.RepoName, dep, from))
+			labels.Add(simplifyLabel(c.RepoName, dep, from))
 
 			// The package resolved unambiguously to a single target, but an external
 			// gazelle plugin (e.g. a proto/wire generator) may own some classes of the same
@@ -354,7 +344,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 					continue
 				}
 				if l := jr.resolveClassFromCrossResolver(c, pc, className, ix, from); l != label.NoLabel {
-					addLabel(l)
+					labels.Add(l)
 					continue
 				}
 				if isTestRule {
@@ -362,7 +352,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 					// set) whose package the resolved production target also owns; the in-repo class
 					// index includes testonly providers for test rules.
 					if l := jr.resolveSingleClass(c, pc, className, ix, from, true); l != label.NoLabel {
-						addLabel(l)
+						labels.Add(l)
 						continue
 					}
 					// Or the class may be a helper in another package's java_test_suite (its
@@ -370,7 +360,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 					// declares the class -- a class the production provider doesn't declare may be a
 					// main top-level function, not a test helper, which must not pull the lib in.
 					if l := jr.resolveTestSuiteHelperClass(c, imp, className, ix, from); l != label.NoLabel {
-						addLabel(l)
+						labels.Add(l)
 						continue
 					}
 				}
@@ -391,7 +381,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 				// Check for explicit resolve directive for this specific class first
 				classImportSpec := resolve.ImportSpec{Lang: languageName, Imp: className.FullyQualifiedClassName()}
 				if ol, found := resolve.FindRuleWithOverride(c, classImportSpec, languageName); found {
-					addLabel(simplifyLabel(c.RepoName, ol, from))
+					labels.Add(simplifyLabel(c.RepoName, ol, from))
 					resolvedAny = true
 					continue
 				}
@@ -408,7 +398,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 					l = jr.resolveTestSuiteHelperClass(c, imp, className, ix, from)
 				}
 				if l != label.NoLabel {
-					addLabel(simplifyLabel(c.RepoName, l, from))
+					labels.Add(simplifyLabel(c.RepoName, l, from))
 					resolvedAny = true
 				}
 			}
@@ -438,7 +428,7 @@ func (jr *Resolver) populateAttr(c *config.Config, pc *javaconfig.Config, r *rul
 				continue
 			}
 			if l := jr.resolveSingleClass(c, pc, className, ix, from, isTestRule); l != label.NoLabel {
-				addLabel(l)
+				labels.Add(l)
 			}
 		}
 	}
