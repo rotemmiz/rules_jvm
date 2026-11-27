@@ -62,12 +62,17 @@ def run_one(args, config, pristine, work, tmp):
     cmd = ["/usr/bin/time", "-v", "-o", gz_time, os.path.join(args.bin_dir, "gazelle-" + config),
            "update", "-repo_root=" + work, "-lang=java"]
     start = time.perf_counter()
-    rc = subprocess.run(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+    log = os.path.join(tmp, "gazelle.log")
+    with open(log, "w") as out:
+        rc = subprocess.run(cmd, env=env, stdout=out, stderr=out).returncode
     wall = time.perf_counter() - start
     deadline = time.time() + 60
     while time.time() < deadline and not (os.path.exists(jvm_time) and os.path.getsize(jvm_time) > 0):
         time.sleep(0.2)
     time.sleep(0.5)
+    if rc != 0 or not os.path.exists(jvm_time):
+        print(open(log).read()[-4000:], flush=True)
+        raise SystemExit(f"gazelle-{config} failed on {work}: rc={rc}, jvm timing written={os.path.exists(jvm_time)}")
     gz, jvm = gnu_time(gz_time), gnu_time(jvm_time)
     return {"rc": rc, "wall_s": round(wall, 3),
             "gazelle_cpu_s": round(gz["user_s"] + gz["sys_s"], 3), "jvm_cpu_s": round(jvm["user_s"] + jvm["sys_s"], 3),
@@ -95,13 +100,14 @@ def main():
     ap.add_argument("--java-home", default=os.environ.get("JAVA_HOME"))
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+    args.bin_dir, args.out = os.path.abspath(args.bin_dir), os.path.abspath(args.out)
     configs = args.configs.split(",")
     os.makedirs(args.out, exist_ok=True)
     tmp = os.path.join(args.out, "tmp")
     os.makedirs(tmp, exist_ok=True)
     args.java_wrapper = os.path.join(tmp, "java-home")
     write_java_wrapper(args.java_wrapper, args.java_home)
-    repos = dict(r.split("=", 1) for r in args.repo)
+    repos = {k: os.path.abspath(v) for k, v in (r.split("=", 1) for r in args.repo)}
 
     identity = []
     for name, pristine in repos.items():
