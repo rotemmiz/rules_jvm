@@ -1,0 +1,94 @@
+name: Gazelle Java benchmark
+
+on:
+  push:
+    branches: [benchmark]
+  workflow_dispatch:
+
+env:
+  MAIN_SHA: e527135a50186d79b5bc368567fd35d1107c9f83
+  ALLOC_SHA: cfcee6d289af23692a2a5c4c08069a1a9f3d2fda
+  PREFETCH_SHA: 5f4d86568b429ad807f2216fd6730b54cad41e25
+  ROUNDS: "10"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: self
+      - uses: actions/checkout@v4
+        with:
+          path: src
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install scipy==1.14.1
+
+      - name: Machine
+        run: |
+          nproc; lscpu | grep -E 'Model name|^CPU\(s\)'; free -g; java -version 2>&1 | head -1
+
+      - name: Build gazelle binaries
+        working-directory: src
+        run: |
+          git config user.name bench && git config user.email bench@example.invalid
+          git fetch origin resolve-fewer-allocations javaparser-prefetch
+          mkdir -p ../bin
+          build() {
+            git checkout -q --detach "$2"
+            echo "$1 = $(git rev-parse HEAD)" | tee -a ../bin/MANIFEST
+            bazel build -c opt --//java/gazelle:embed_server=True //:gazelle_bin
+            cp -f bazel-bin/gazelle_bin_/gazelle_bin "../bin/gazelle-$1"
+          }
+          build main "$MAIN_SHA"
+          build alloc "$ALLOC_SHA"
+          build prefetch "$PREFETCH_SHA"
+          git checkout -q --detach "$PREFETCH_SHA" && git merge -q --no-edit "$ALLOC_SHA"
+          build combined HEAD
+          bazel shutdown
+
+      - name: Prepare repos
+        run: |
+          prep() {
+            mkdir -p "repos/$1"
+            curl -fsSL "$2" | tar xz -C "repos/$1" --strip-components=1
+            find "repos/$1" \( -name BUILD -o -name BUILD.bazel \) -delete
+            cp "self/bench/$1.BUILD.bazel" "repos/$1/BUILD.bazel"
+            echo 'module(name = "bench")' > "repos/$1/MODULE.bazel"
+            echo "$1: $(find repos/$1 -name '*.java' | wc -l) .java, $(find repos/$1 -name '*.kt' | wc -l) .kt, $(find repos/$1 -type f | wc -l) files"
+          }
+          prep elasticsearch https://github.com/elastic/elasticsearch/archive/refs/tags/v8.16.0.tar.gz
+          prep spring-framework https://github.com/spring-projects/spring-framework/archive/refs/tags/v6.2.0.tar.gz
+
+      - name: Run
+        run: |
+          python self/bench/run.py --bin-dir bin --configs main,alloc,prefetch,combined --rounds "$ROUNDS" --out out \
+            --repo elasticsearch=repos/elasticsearch --repo spring-framework=repos/spring-framework
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "# Gazelle Java benchmark"
+            echo
+            echo "\`ubuntu-latest\`, $(nproc) CPUs ($(lscpu | sed -n 's/Model name: *//p')), Zulu 17, GOMAXPROCS unset. Binaries:"
+            echo; sed 's/^/- /' bin/MANIFEST; echo
+            python self/bench/report.py out main "main=main,alloc=#1 alloc,prefetch=#2 prefetch,combined=#1 + #2"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: |
+            out/*.csv
+            bin/MANIFEST
