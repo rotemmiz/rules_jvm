@@ -92,24 +92,20 @@ func className(pkg, outer string, inner ...string) ClassName {
 func TestFullyQualifiedClassName(t *testing.T) {
 	long := strings.Repeat("a", 100)
 	for _, tc := range []struct {
-		c         ClassName
-		wantOuter string
-		wantFull  string
+		c    ClassName
+		want string
 	}{
-		{className("com.example", "Foo"), "com.example.Foo", "com.example.Foo"},
-		{className("", "Foo"), "Foo", "Foo"},
-		{className("", "Foo", "Bar"), "Foo", "Foo.Bar"},
-		{className("com.example", "Foo", "Bar", "Baz"), "com.example.Foo", "com.example.Foo.Bar.Baz"},
-		{className("com", "Foo", ""), "com.Foo", "com.Foo."},
-		{className("com..example", "Foo"), "com..example.Foo", "com..example.Foo"},
-		{className("", ""), "", ""},
-		{className(long, long, long), long + "." + long, long + "." + long + "." + long},
+		{className("com.example", "Foo"), "com.example.Foo"},
+		{className("", "Foo"), "Foo"},
+		{className("", "Foo", "Bar"), "Foo.Bar"},
+		{className("com.example", "Foo", "Bar", "Baz"), "com.example.Foo.Bar.Baz"},
+		{className("com", "Foo", ""), "com.Foo."},
+		{className("com..example", "Foo"), "com..example.Foo"},
+		{className("", ""), ""},
+		{className(long, long, long), long + "." + long + "." + long},
 	} {
-		if got := tc.c.FullyQualifiedOuterClassName(); got != tc.wantOuter {
-			t.Errorf("FullyQualifiedOuterClassName(%#v) = %q, want %q", tc.c, got, tc.wantOuter)
-		}
-		if got := tc.c.FullyQualifiedClassName(); got != tc.wantFull {
-			t.Errorf("FullyQualifiedClassName(%#v) = %q, want %q", tc.c, got, tc.wantFull)
+		if got := tc.c.FullyQualifiedClassName(); got != tc.want {
+			t.Errorf("FullyQualifiedClassName(%#v) = %q, want %q", tc.c, got, tc.want)
 		}
 	}
 }

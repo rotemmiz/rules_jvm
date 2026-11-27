@@ -44,10 +44,12 @@ func (c *ClassName) BareOuterClassName() string {
 }
 
 func (c *ClassName) FullyQualifiedOuterClassName() string {
-	if c.packageName.Name == "" {
-		return c.bareOuterClassName
+	var parts []string
+	if c.packageName.Name != "" {
+		parts = append(parts, strings.Split(c.packageName.Name, ".")...)
 	}
-	return c.packageName.Name + "." + c.bareOuterClassName
+	parts = append(parts, c.bareOuterClassName)
+	return strings.Join(parts, ".")
 }
 
 func (c *ClassName) FullyQualifiedClassName() string {
