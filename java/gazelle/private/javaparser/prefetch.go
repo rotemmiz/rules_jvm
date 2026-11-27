@@ -59,7 +59,7 @@ func (p *prefetcher) schedule(rel string, files []string) {
 	if _, ok := p.pending[rel]; ok || p.stopped {
 		return
 	}
-	e := &prefetchedParse{files: slices.Clone(files), done: make(chan struct{})}
+	e := &prefetchedParse{files: files, done: make(chan struct{})}
 	p.pending[rel] = e
 	p.wg.Add(1)
 	go p.run(rel, e)
